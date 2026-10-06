@@ -1,38 +1,32 @@
 package com.tienda.pedidos.service;
 
-import com.tienda.pedidos.descuento.SelectorEstrategiaDescuento;
+import com.tienda.pedidos.descuento.CalculadorDescuentoFinal;
 import com.tienda.pedidos.dto.ItemPedido;
 import com.tienda.pedidos.dto.PedidoRequest;
 import com.tienda.pedidos.dto.ResultadoPedido;
 import com.tienda.pedidos.validacion.ContextoPedido;
-import com.tienda.pedidos.validacion.PromocionBlackFriday;
-import com.tienda.pedidos.validacion.PromocionCorporativo;
-import com.tienda.pedidos.validacion.PromocionVolumen;
 import com.tienda.pedidos.validacion.ValidadorCliente;
 import com.tienda.pedidos.validacion.ValidadorPedido;
 import com.tienda.pedidos.validacion.ValidadorStock;
 import org.springframework.stereotype.Service;
 
-// GestorPedidos ahora encadena 5 eslabones (2 de validacion real + 3 de "promocion")
-// y combina el descuento de Strategy con el descuentoCampana escrito por la cadena
+/** Orquestador delgado: la cadena solo contiene validaciones reales; el descuento se delega por completo. */
 @Service
 public class GestorPedidos {
     private static final double TASA_IVA = 0.19;
 
     private final ValidadorPedido primerValidador;
-    private final SelectorEstrategiaDescuento selector;
+    private final CalculadorDescuentoFinal calculadorDescuento;
     private final ProductoRepository productos;
     private final PedidoRepository repository;
     private final NotificacionPedidoService notificacion;
 
     public GestorPedidos(ValidadorStock stock, ValidadorCliente cliente,
-                         PromocionBlackFriday blackFriday, PromocionCorporativo corporativo,
-                         PromocionVolumen volumen, SelectorEstrategiaDescuento selector,
-                         ProductoRepository productos, PedidoRepository repository,
-                         NotificacionPedidoService notificacion) {
-        stock.encadenar(cliente).encadenar(blackFriday).encadenar(corporativo).encadenar(volumen);
+                         CalculadorDescuentoFinal calculadorDescuento, ProductoRepository productos,
+                         PedidoRepository repository, NotificacionPedidoService notificacion) {
+        stock.encadenar(cliente);
         this.primerValidador = stock;
-        this.selector = selector;
+        this.calculadorDescuento = calculadorDescuento;
         this.productos = productos;
         this.repository = repository;
         this.notificacion = notificacion;
@@ -46,8 +40,7 @@ public class GestorPedidos {
         double subtotal = calcularSubtotal(request);
         contexto.setSubtotal(subtotal);
 
-        double descuentoTipoCliente = selector.seleccionar(contexto.getTipoCliente()).calcular(contexto);
-        double descuento = Math.max(descuentoTipoCliente, contexto.getDescuentoCampana());
+        double descuento = calculadorDescuento.calcular(contexto);
         double impuesto = (subtotal - subtotal * descuento) * TASA_IVA;
         double total = subtotal - (subtotal * descuento) + impuesto;
 

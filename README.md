@@ -34,3 +34,22 @@ La clase además inyecta `JdbcTemplate` y `EmailService` directamente (líneas 2
 
 ### Pruebas de caracterización
 `PedidoCaracterizacionTest` ejecuta 11 pedidos sobre las tres rutas de validación (stock, mora, cliente) y los descuentos VIP (5 %, 10 %, 15 %), FRECUENTE (4 %, 8 %) y ESTANDAR (0 %). Se escribieron **antes** de refactorizar para fijar el comportamiento observable.
+
+## Decisiones de diseño — Parte 1
+
+**Antipatrón identificado:** God Object + Spaghetti Code en `GestorPedidos.procesarPedido()` (evidencia en el diagnóstico de arriba: 6 responsabilidades en 106 líneas, hasta 3 niveles de anidamiento, SQL, reglas y formato de texto en el mismo método).
+
+**Estructura resultante (4 capas cohesivas):**
+`ValidadorStock → ValidadorCliente` (paquete `validacion/`), `EstrategiaDescuento` + `SelectorEstrategiaDescuento` (paquete `descuento/`), `PedidoRepository` / `ProductoRepository` (persistencia), `NotificacionPedidoService` (aviso) y un `GestorPedidos` de 61 líneas que solo orquesta.
+
+**Patrón 1 — Chain of Responsibility para las validaciones.** Las validaciones tienen una dependencia real de orden y de corte anticipado: si el stock falla, no tiene sentido consultar la mora del cliente. *Alternativa descartada:* un método `validarTodo()` con una lista de `Predicate<ContextoPedido>`; evalúa todos los predicados aunque el primero falle y no permite que un validador decida no delegar al siguiente.
+
+**Patrón 2 — Strategy para el descuento.** El descuento no depende de un orden: siempre se aplica exactamente una regla según el tipo de cliente. *Alternativa descartada:* modelarlo como un eslabón más de la cadena; habría exigido un mecanismo artificial para garantizar que solo un eslabón module el descuento. Un mapa de selección directa resuelve el problema con menos indirección y sin condicionales.
+
+**Ajustes necesarios para conservar el comportamiento original** (detectados al comparar con las pruebas de caracterización):
+- `ValidadorStock` conserva el rechazo "El pedido no contiene items"; sin él, un pedido sin ítems provocaría un `NullPointerException`.
+- `encadenar()` devuelve el eslabón *recibido*, no el receptor. Por eso `GestorPedidos` guarda `stock` como inicio de la cadena en lugar de asignar el valor devuelto; de lo contrario la cadena empezaría en `ValidadorCliente` y nunca se validaría el stock.
+- El cálculo de precios usa un pequeño `ProductoRepository`, para que `GestorPedidos` no tenga SQL ni `JdbcTemplate`.
+- Se conservó deliberadamente el comportamiento heredado ante un cliente inexistente (excepción de acceso a datos): el objetivo de esta parte es refactorizar sin cambiar el comportamiento observable.
+
+**Mejoras que quedan fuera de alcance:** transacción explícita sobre `PedidoRepository.guardar`, y inyectar un `Clock` en `ValidadorCliente` para probar el horario de corte sin depender de la hora del sistema.

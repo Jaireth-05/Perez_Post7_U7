@@ -1,6 +1,19 @@
 # Post-contenido — Unidad 6: Antipatrones de Diseño
 
-Proyecto Spring Boot `pedidos-service` (Java 17, Spring JDBC, H2).
+## Descripción
+Repositorio del post-contenido de la Unidad 6 de Patrones de Diseño de Software. Un único proyecto Spring Boot (`pedidos-service`, Java 17, Spring JDBC, H2) con dos partes: (1) diagnóstico y refactorización de un antipatrón combinado (God Object + Spaghetti Code) en `GestorPedidos`, y (2) diagnóstico y corrección de un segundo antipatrón (Golden Hammer) introducido al hacer crecer el mismo proyecto con tres campañas de descuento.
+
+## Estructura
+```
+src/main/java/com/tienda/pedidos/
+├── dto/          PedidoRequest, ItemPedido, ResultadoPedido
+├── validacion/   ContextoPedido, ValidadorPedido, ValidadorStock, ValidadorCliente   (Chain of Responsibility)
+├── descuento/    EstrategiaDescuento + Vip / Frecuente / Estandar / BlackFriday / Corporativo / Volumen,
+│                 SelectorEstrategiaDescuento, CalculadorDescuentoFinal                  (Strategy)
+└── service/      GestorPedidos (orquestador), PedidoRepository, ProductoRepository,
+                  NotificacionPedidoService, EmailService, ConsoleEmailService
+src/test/java/com/tienda/pedidos/   PedidoCaracterizacionTest, CampanasTest, CampanasBlackFridayTest
+```
 
 ## Diagnóstico de la Parte 1 — `GestorPedidos` (antes de refactorizar)
 
@@ -80,3 +93,30 @@ Las tres campañas tienen exactamente la forma de `DescuentoVip` o `DescuentoFre
 Se escribieron `CampanasTest` y `CampanasBlackFridayTest` (9 pedidos de campaña) en el mismo commit que la versión con eslabones, para fijar su resultado antes de corregir. Se mantienen **sin modificar** en el commit de la corrección.
 
 > Observación sobre el código de partida: en el fragmento original `primerValidador = stock.encadenar(cliente).encadenar(...)` asignaría el *último* eslabón (porque `encadenar` devuelve el eslabón recibido). En este repositorio se guarda `stock` como inicio de la cadena, tal como en la Parte 1.
+
+## Decisiones de diseño — Parte 2
+
+**Antipatrón identificado:** Golden Hammer. `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen` se implementaron como eslabones de la cadena de validación aunque no tenían dependencia de orden entre sí ni capacidad (ni necesidad) de rechazar el pedido; es decir, no tenían ninguna de las dos propiedades que justificaban la cadena en `ValidadorStock` y `ValidadorCliente`. Se reutilizó Chain of Responsibility porque "ya funcionó" en la Parte 1 (evidencia en la tabla del diagnóstico de la Parte 2).
+
+**Patrón aplicado:** Strategy. Las tres campañas pasaron a ser `EstrategiaDescuento` (`DescuentoBlackFriday`, `DescuentoCorporativo`, `DescuentoVolumen`), igual que los descuentos por tipo de cliente, y `CalculadorDescuentoFinal` combina el descuento por tipo de cliente con el de campañas tomando el mayor. `GestorPedidos` delega el cálculo completo del descuento y volvió a tener 6 parámetros de constructor.
+
+**Alternativa descartada:** mantener las campañas en la cadena. Fue descartada por ser la causa del antipatrón: reutilizar una herramienta conocida sin verificar que el nuevo problema tuviera su misma forma. Además, con la cadena la regla "el mayor descuento gana" quedaba escondida en un campo mutable compartido; con Strategy está explícita en `CalculadorDescuentoFinal`, y si en el futuro dos campañas debieran sumarse, el cambio se localiza en una sola clase.
+
+**Eliminar, no comentar:** las tres clases `Promocion*` y el campo `descuentoCampana` se borraron por completo (verificado con `grep`: 0 referencias). Dejarlas comentadas "por si acaso" sería el origen de un Lava Flow (código que nadie se atreve a borrar porque no se sabe si aún cumple una función); la referencia histórica la conserva el historial de Git (commit `feat: agregar 3 campanas...`).
+
+**Equivalencia:** `CampanasTest` y `CampanasBlackFridayTest` se escribieron junto con la versión con eslabones y no se modificaron en la corrección, de modo que los mismos totales (107 100, 2 199 120, 2 124 150, 89 250, 178 500, 1 115 625, …) validan ambas versiones.
+
+## Cómo ejecutar
+```
+mvn spring-boot:run
+mvn test
+```
+Para activar la campaña Black Friday: `promo.black-friday.activa=true` en `application.properties`.
+Nota: la regla de mora depende de la hora del sistema (corte a las 20:00); `PedidoCaracterizacionTest.clienteMorosoDependeDelHorarioDeCorte` calcula el resultado esperado según la hora actual.
+
+## Herramientas utilizadas
+- Java 17, Spring Boot 3.2, Spring JDBC, H2 Database, JUnit 5 y Mockito
+- Maven, VS Code / IntelliJ IDEA, Git, GitHub
+
+## Conclusiones
+Lo más valioso de este laboratorio fue ver que un mismo patrón puede ser la solución correcta en la Parte 1 y el error en la Parte 2: Chain of Responsibility estaba justificada para las validaciones porque había orden y corte anticipado, pero no para las campañas, que solo calculan un porcentaje. Aprendí a diagnosticar con evidencia —líneas, niveles de anidamiento, responsabilidades— en lugar de poner una etiqueta como "God Object", y a preguntarme antes de reutilizar una solución si el nuevo problema tiene la misma forma que el anterior. Escribir primero las pruebas de caracterización me permitió refactorizar con confianza y me ayudó a detectar errores sutiles, como que `encadenar()` devuelve el eslabón recibido y no el primero de la cadena, algo que habría dejado el stock sin validar. Lo que más me costó fue decidir qué merecía su propia clase: separar demasiado también tiene costo, y por eso tomé la decisión de ir clase por clase según las razones de cambio.

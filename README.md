@@ -3,7 +3,7 @@
 ## Descripción
 Repositorio del post-contenido de la Unidad 6 de Patrones de Diseño de Software. Un único proyecto Spring Boot (`pedidos-service`, Java 17, Spring JDBC, H2) con dos partes: (1) diagnóstico y refactorización de un antipatrón combinado (God Object + Spaghetti Code) en `GestorPedidos`, y (2) diagnóstico y corrección de un segundo antipatrón (Golden Hammer) introducido al hacer crecer el mismo proyecto con tres campañas de descuento.
 
-## Estructura
+## Estructuraa
 ```
 src/main/java/com/tienda/pedidos/
 ├── dto/          PedidoRequest, ItemPedido, ResultadoPedido

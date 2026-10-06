@@ -53,3 +53,30 @@ La clase además inyecta `JdbcTemplate` y `EmailService` directamente (líneas 2
 - Se conservó deliberadamente el comportamiento heredado ante un cliente inexistente (excepción de acceso a datos): el objetivo de esta parte es refactorizar sin cambiar el comportamiento observable.
 
 **Mejoras que quedan fuera de alcance:** transacción explícita sobre `PedidoRepository.guardar`, y inyectar un `Clock` en `ValidadorCliente` para probar el horario de corte sin depender de la hora del sistema.
+
+## Diagnóstico de la Parte 2 — las tres campañas como eslabones de la cadena
+
+Código analizado (commit `feat: agregar 3 campanas...`): `PromocionBlackFriday`, `PromocionCorporativo`, `PromocionVolumen`, el campo `descuentoCampana` de `ContextoPedido` y el constructor de `GestorPedidos` que ahora encadena 5 eslabones.
+
+### Antipatrón: Golden Hammer
+Se reutilizó Chain of Responsibility porque funcionó en la Parte 1, sin comprobar si el nuevo problema tenía la misma forma. La comprobación contra las propiedades que justificaban la cadena da este resultado:
+
+| Propiedad que justifica la cadena | `ValidadorStock` / `ValidadorCliente` | `PromocionBlackFriday` / `Corporativo` / `Volumen` |
+|---|---|---|
+| Dependencia de orden | **Sí**: el stock debe validarse antes que la mora del cliente | **No**: `aplicarDescuentoCampana` toma el máximo (operación conmutativa); ejecutar `PromocionVolumen` antes que `PromocionCorporativo` produce el mismo resultado |
+| Corte anticipado (puede rechazar) | **Sí**: llaman a `contexto.rechazar(...)` | **No**: ninguna de las tres llama jamás a `rechazar()`; el propio comentario de `PromocionBlackFriday` lo admite ("nunca rechaza") |
+| Cumple el contrato `ValidadorPedido` ("decidir si el pedido continúa o se rechaza") | Sí | No: son *calculadoras de descuento* disfrazadas de validadores |
+
+**Evidencia adicional de que no era la herramienta adecuada:**
+- Los eslabones nuevos se comunican escribiendo en un **campo mutable compartido** (`descuentoCampana`), efecto lateral en lugar de un valor de retorno.
+- La regla "el mayor descuento gana" está escondida dentro de `ContextoPedido.aplicarDescuentoCampana`, no en un lugar que exprese la regla de negocio. Si dos campañas debieran **sumarse**, el campo compartido y la cadena no lo permiten sin ambigüedad (¿quién suma?, ¿en qué orden?).
+- `GestorPedidos` ahora combina **dos mecanismos distintos** para el mismo concepto de "descuento" (`selector` + `descuentoCampana`), y su constructor pasó de 6 a 9 parámetros.
+- El comentario de `PromocionBlackFriday` ("se agregó a la cadena porque los eslabones ya sabían conectarse entre sí") muestra que la razón fue la comodidad de lo conocido, no el análisis del problema.
+- `PromocionVolumen` recalcula desde el `request` un dato (unidades totales) que el contexto no expone: otra señal de que el contexto de *validación* no es el lugar de este cálculo.
+
+Las tres campañas tienen exactamente la forma de `DescuentoVip` o `DescuentoFrecuente`: calculan un porcentaje a partir de datos del pedido o del cliente, sin orden de evaluación. Corresponde a **Strategy**, no a la cadena.
+
+### Verificación de equivalencia
+Se escribieron `CampanasTest` y `CampanasBlackFridayTest` (9 pedidos de campaña) en el mismo commit que la versión con eslabones, para fijar su resultado antes de corregir. Se mantienen **sin modificar** en el commit de la corrección.
+
+> Observación sobre el código de partida: en el fragmento original `primerValidador = stock.encadenar(cliente).encadenar(...)` asignaría el *último* eslabón (porque `encadenar` devuelve el eslabón recibido). En este repositorio se guarda `stock` como inicio de la cadena, tal como en la Parte 1.
